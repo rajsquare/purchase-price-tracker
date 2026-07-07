@@ -1,0 +1,101 @@
+rules_version = '2';
+
+// Threat model:
+//   - There are no user accounts. `request.auth != null` here refers only
+//     to the app's invisible anonymous Firebase session (see
+//     ensureFirebaseSession in src/firebase/client.ts), which exists
+//     purely so these rules have something to check against — it is not a
+//     login flow and grants no meaningful identity.
+//   - The shared password remains the only visible gate. Password hashes
+//     live in settings/auth and are verified by the client.
+//
+// IMPORTANT: these rules govern the Purchase Tracker project ONLY. The
+// product catalog lives entirely in the separate Price List Firebase
+// project (pricelist-a9d70) and is governed by that project's own rules —
+// there is no `products` collection here, and there never should be.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function validSupplier() {
+      return request.resource.data.keys().hasOnly([
+        "name",
+        "displayOrder",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]) &&
+      request.resource.data.name is string &&
+      request.resource.data.displayOrder is number &&
+      request.resource.data.active is bool;
+    }
+
+    function validCurrentPrice() {
+      return request.resource.data.keys().hasOnly([
+        "productSr",
+        "supplierId",
+        "price",
+        "currency",
+        "remarks",
+        "updatedAt"
+      ]) &&
+      request.resource.data.productSr is string &&
+      request.resource.data.supplierId is string &&
+      request.resource.data.price is number &&
+      request.resource.data.price > 0 &&
+      request.resource.data.currency is string &&
+      request.resource.data.remarks is string;
+    }
+
+    function validPriceHistory() {
+      return request.resource.data.keys().hasOnly([
+        "productSr",
+        "supplierId",
+        "price",
+        "currency",
+        "remarks",
+        "effectiveDate",
+        "enteredAt",
+        "createdAt"
+      ]) &&
+      request.resource.data.productSr is string &&
+      request.resource.data.supplierId is string &&
+      request.resource.data.price is number &&
+      request.resource.data.price > 0 &&
+      request.resource.data.currency is string &&
+      request.resource.data.remarks is string;
+    }
+
+    match /suppliers/{supplierId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && validSupplier();
+      allow delete: if signedIn();
+    }
+
+    match /currentPrices/{currentPriceId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && validCurrentPrice();
+      allow delete: if false;
+    }
+
+    match /priceHistory/{historyId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validPriceHistory();
+      allow update, delete: if false;
+    }
+
+    match /settings/auth {
+      allow read: if signedIn();
+      allow create, update: if signedIn() &&
+        request.resource.data.keys().hasOnly(["passwordHash", "updatedAt"]) &&
+        request.resource.data.passwordHash is string;
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
